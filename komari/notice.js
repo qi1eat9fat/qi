@@ -189,7 +189,7 @@ async function sendEvent(event) {
     }
 
     L.push('');
-    L.push(`<code>Qi</code>  ·  <i>qi</i>`);
+    L.push(`<code>Qi</code>  ·  <i>萬事勝意</i>`);
 
     return await sendMessage(L.join('\n'), '', targetId);
 
