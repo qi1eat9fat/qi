@@ -4,5 +4,6 @@ payload:
   - DOMAIN, jpcdn.longemby.com
   - DOMAIN, www.netlib.re
   - DOMAIN, x666.me
-  - DOMAIN-SUFFIX, fcapp.run
   - DOMAIN-SUFFIX, h-e.top
+  - DOMAIN-SUFFIX, fcapp.run
+
