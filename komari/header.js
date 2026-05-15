@@ -1047,7 +1047,7 @@
 		window.DisableAnimatedMan = false;
 		window.FixedTopServerName = true;
 		
-		window.CustomIllustration = 'https://image.fatqi.pp.ua/%E9%9B%BE%E9%9B%A8%E9%AD%94%E7%90%86%E6%B2%99.webp'; 
+		window.CustomIllustration = 'https://image.687657.xyz/%E9%9B%BE%E9%9B%A8%E9%AD%94%E7%90%86%E6%B2%99.webp'; 
 
 		var style = document.createElement("style");
 		style.textContent =
