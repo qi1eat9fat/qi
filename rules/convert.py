@@ -67,7 +67,7 @@ def convert_rules():
         "#!desc=自动同步 zqzess 仓库的番茄小说分流与重写规则，并转换为 Loon 插件格式。",
         "#!author=zqzess (Auto Converted)",
         "#!homepage=https://github.com/zqzess/rule_for_quantumultX",
-        "#!icon=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Book.png",
+        "#!icon=https://raw.githubusercontent.com/deezertidal/private/main/icons/fanqie.png",
         "\n[Rule]"
     ]
     plugin_content.extend(loon_rules)
