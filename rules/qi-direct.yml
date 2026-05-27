@@ -1,6 +1,6 @@
 payload:
-  - DOMAIN, hkcdn.longemby.com
-  - DOMAIN, jpcdn.longemby.com
+  - DOMAIN-SUFFIX, longemby.com
+  - DOMAIN-SUFFIX, longemby.top
   - DOMAIN, www.netlib.re
   - DOMAIN, a-ocnfniawgw.cn-shanghai.fcapp.run
   - DOMAIN, elysia.h-e.top
