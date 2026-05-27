@@ -22,8 +22,8 @@ jobs:
         python-version: '3.x'
 
     - name: 运行转换脚本
-      # 指定工作目录，让脚本在这个目录下执行并生成文件
-      working-directory: ./qi/rules
+      # 修正：直接进入根目录下的 rules 文件夹
+      working-directory: ./rules
       run: python convert.py
 
     - name: 检查是否有文件更新并提交
@@ -31,8 +31,8 @@ jobs:
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         
-        # 指定添加特定目录下的插件文件
-        git add qi/rules/FanQieNovel.plugin
+        # 修正：指定添加 rules 目录下的插件文件
+        git add rules/FanQieNovel.plugin
         
         if git diff --staged --quiet; then
           echo "No changes inside the plugin file."
