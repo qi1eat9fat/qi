@@ -4,13 +4,13 @@ on:
   schedule:
     # 每天北京时间早上 8:30 自动运行 (UTC 00:30)
     - cron: '30 0 * * *'
-  workflow_dispatch: # 允许你在网页上点击手动触发更新
+  workflow_dispatch: # 允许手动触发更新
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 赋予 Actions 写入代码到仓库的权限
+      contents: write # 赋予 Actions 写入代码的权限
 
     steps:
     - name: 检出仓库代码
@@ -22,13 +22,18 @@ jobs:
         python-version: '3.x'
 
     - name: 运行转换脚本
+      # 指定工作目录，让脚本在这个目录下执行并生成文件
+      working-directory: ./qi/rules
       run: python convert.py
 
     - name: 检查是否有文件更新并提交
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-        git add FanQieNovel.plugin
+        
+        # 指定添加特定目录下的插件文件
+        git add qi/rules/FanQieNovel.plugin
+        
         if git diff --staged --quiet; then
           echo "No changes inside the plugin file."
         else
