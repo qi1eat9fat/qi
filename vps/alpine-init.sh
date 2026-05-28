@@ -142,6 +142,22 @@ configure_hostname() {
 127.0.1.1	$HOSTNAME_VALUE
 EOF
     fi
+
+    # 云服务器 Alpine 镜像通常启用了 cloud-init。若不设置 preserve_hostname，
+    # cloud-init 会在每次启动时按元数据 local-hostname 覆盖运行中的 hostname。
+    if [ -d /etc/cloud ] || [ -d /var/lib/cloud ] || command -v cloud-init >/dev/null 2>&1; then
+        echo "==> 检测到 cloud-init，配置为保留本机 hostname..."
+        install -d -m 755 /etc/cloud/cloud.cfg.d
+        cat > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg <<EOF
+# Created by alpine-init.sh
+preserve_hostname: true
+EOF
+    fi
+
+    # 确保 Alpine/OpenRC 开机时会从 /etc/hostname 应用 hostname。
+    if command -v rc-update >/dev/null 2>&1 && [ -x /etc/init.d/hostname ]; then
+        rc-update add hostname boot >/dev/null 2>&1 || true
+    fi
 }
 
 configure_root_ssh_key() {
