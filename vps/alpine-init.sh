@@ -158,6 +158,35 @@ EOF
     if command -v rc-update >/dev/null 2>&1 && [ -x /etc/init.d/hostname ]; then
         rc-update add hostname boot >/dev/null 2>&1 || true
     fi
+
+    # 某些云镜像中，cloud-init 已经不再覆盖 hostname，但 boot 阶段的 hostname
+    # 服务没有最终生效。增加一个 default 阶段兜底服务，在 cloud-init 之后再次
+    # 把 /etc/hostname 应用到运行中的 hostname。
+    if command -v rc-update >/dev/null 2>&1; then
+        cat > /etc/init.d/apply-local-hostname <<'EOF_APPLY_HOSTNAME'
+#!/sbin/openrc-run
+
+description="Apply /etc/hostname after cloud-init"
+
+depend() {
+    need localmount
+    after cloud-init-local cloud-init cloud-config cloud-final net hostname
+}
+
+start() {
+    ebegin "Applying local hostname from /etc/hostname"
+    if [ -s /etc/hostname ]; then
+        new_hostname="$(sed -n '1p' /etc/hostname | tr -d '\r\n')"
+        if [ -n "$new_hostname" ]; then
+            hostname "$new_hostname"
+        fi
+    fi
+    eend $?
+}
+EOF_APPLY_HOSTNAME
+        chmod +x /etc/init.d/apply-local-hostname
+        rc-update add apply-local-hostname default >/dev/null 2>&1 || true
+    fi
 }
 
 configure_root_ssh_key() {
