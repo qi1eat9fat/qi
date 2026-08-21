@@ -1,20 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# Xray VLESS-Reality 一键安装管理脚本
-# 版本: V-Final-2.2
-# 更新日志 (V-Final-2.2):
-# - [UI] 明确菜单选项为 (VLESS-reality)
-# - [改进] 增强端口占用检查
-# - [改进] 增强UUID格式验证
-# - [改进] 改进系统兼容性检查
+# Xray VLESS-Reality 一键安装管理脚本 (兼容 Alpine/OpenRC & Debian/Systemd)
+# 版本: V-Final-2.3-Alpine
 # ==============================================================================
 
 # --- Shell 严格模式 ---
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="V-Final-2.2"
+readonly SCRIPT_VERSION="V-Final-2.3-Alpine"
 readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
@@ -38,7 +33,8 @@ spinner() {
         wait "$pid"
         return
     fi
-    while ps -p "$pid" > /dev/null; do
+    # 替换 ps -p 为 kill -0，完美兼容 Alpine/BusyBox 环境
+    while kill -0 "$pid" 2>/dev/null; do
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
@@ -63,8 +59,87 @@ get_public_ip() {
     error "无法获取公网 IP 地址。" && return 1
 }
 
+# --- 新增：Alpine 专属手动安装与服务配置 ---
+install_xray_core_manually() {
+    local target=$1
+    if [[ "$target" == "core" ]]; then
+        # 1. 获取最新版本号
+        local version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name')
+        [[ -z "$version" || "$version" == "null" ]] && return 1
+        
+        # 2. 判断 CPU 架构
+        local machine=$(uname -m)
+        local arch=""
+        case "$machine" in
+            x86_64) arch="64" ;;
+            aarch64) arch="arm64-v8a" ;;
+            s390x) arch="s390x" ;;
+            *) return 1 ;;
+        esac
+        
+        # 3. 下载并解压 Xray 核心
+        local zip_url="https://github.com/XTLS/Xray-core/releases/download/${version}/Xray-linux-${arch}.zip"
+        curl -sL -o /tmp/xray.zip "$zip_url" || return 1
+        mkdir -p /tmp/xray_ext
+        unzip -qo /tmp/xray.zip -d /tmp/xray_ext || return 1
+        
+        # 4. 安装二进制文件
+        install -m 755 /tmp/xray_ext/xray /usr/local/bin/xray
+        
+        # 5. 写入纯正的 Alpine OpenRC 服务文件
+        cat > /etc/init.d/xray << 'EOF'
+#!/sbin/openrc-run
+
+name="xray"
+description="Xray Service"
+command="/usr/local/bin/xray"
+command_args="run -config /usr/local/etc/xray/config.json"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need net
+    after network
+}
+EOF
+        chmod +x /etc/init.d/xray
+        # 设置开机自启
+        rc-update add xray default &>/dev/null
+        # 清理缓存
+        rm -rf /tmp/xray.zip /tmp/xray_ext
+        
+    elif [[ "$target" == "geodata" ]]; then
+        # 手动下载 GeoData
+        mkdir -p /usr/local/share/xray
+        curl -sL -o /usr/local/share/xray/geoip.dat "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat" || return 1
+        curl -sL -o /usr/local/share/xray/geosite.dat "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat" || return 1
+    fi
+    return 0
+}
+
+# --- 修改：智能分发执行流程 ---
 execute_official_script() {
     local args="$1"
+    
+    # 核心判断：如果没有 systemctl（即 Alpine 环境），完全接管安装流程
+    if ! command -v systemctl &>/dev/null; then
+        if [[ "$args" == "install" ]]; then
+            install_xray_core_manually "core" &
+        elif [[ "$args" == "install-geodata" ]]; then
+            install_xray_core_manually "geodata" &
+        elif [[ "$args" == "remove --purge" ]]; then
+            ( rc-service xray stop &>/dev/null || true
+              rc-update del xray default &>/dev/null || true
+              rm -f /etc/init.d/xray /usr/local/bin/xray
+              rm -rf /usr/local/etc/xray /usr/local/share/xray /var/log/xray ) &
+        fi
+        
+        spinner $!
+        wait $! || return 1
+        return 0
+    fi
+
+    # 正常的官方脚本逻辑 (支持 systemd 的常规 Linux 系统)
     local script_content
     script_content=$(curl -L "$xray_install_script_url")
     if [[ -z "$script_content" ]]; then
@@ -124,8 +199,8 @@ check_system_compatibility() {
         return 1
     fi
     
-    # 支持的发行版列表
-    local supported_distros=("ubuntu" "debian" "kali" "raspbian" "deepin" "mint" "elementary")
+    # 支持的发行版列表，加入 alpine
+    local supported_distros=("ubuntu" "debian" "kali" "raspbian" "deepin" "mint" "elementary" "alpine")
     local distro_detected=false
     local distro_name=""
     local distro_version=""
@@ -134,7 +209,7 @@ check_system_compatibility() {
     if [[ -f "$os_release_file" ]]; then
         source "$os_release_file"
         distro_name=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
-        distro_version="$VERSION_ID"
+        distro_version="${VERSION_ID:-unknown}"
         
         # 检查是否为支持的发行版
         for supported in "${supported_distros[@]}"; do
@@ -145,7 +220,7 @@ check_system_compatibility() {
         done
         
         # 检查基于Debian的发行版
-        if [[ "$distro_detected" == false && "$ID_LIKE" =~ debian|ubuntu ]]; then
+        if [[ "$distro_detected" == false && "${ID_LIKE:-}" =~ debian|ubuntu ]]; then
             distro_detected=true
             distro_name="$ID_LIKE"
         fi
@@ -178,12 +253,16 @@ check_system_compatibility() {
             distro_detected=true
             distro_name="debian-compatible"
             info "检测到基于APT的包管理系统，假定为Debian兼容系统。"
+        elif command -v apk &>/dev/null; then
+            distro_detected=true
+            distro_name="alpine-compatible"
+            info "检测到基于APK的包管理系统，假定为Alpine兼容系统。"
         fi
     fi
     
     if [[ "$distro_detected" == false ]]; then
         error "错误: 未检测到支持的Linux发行版。"
-        error "支持的系统: Ubuntu, Debian, Kali Linux, Raspbian, Deepin, Linux Mint, elementary OS"
+        error "支持的系统: Ubuntu, Debian, Alpine, Kali Linux, Raspbian, Deepin, Linux Mint, elementary OS"
         error "当前系统信息: $(uname -a)"
         return 1
     fi
@@ -194,8 +273,8 @@ check_system_compatibility() {
         info "检测到系统: ${distro_name} ${distro_version}"
     fi
     
-    # 检查关键命令是否存在
-    local required_commands=("systemctl" "awk" "grep" "sed")
+    # 检查关键命令是否存在 (去除了硬编码的 systemctl)
+    local required_commands=("awk" "grep" "sed")
     local missing_commands=()
     
     for cmd in "${required_commands[@]}"; do
@@ -204,6 +283,11 @@ check_system_compatibility() {
         fi
     done
     
+    # 服务管理器检查：既没有 systemctl 也没有 rc-service
+    if ! command -v systemctl &>/dev/null && ! command -v rc-service &>/dev/null; then
+        missing_commands+=("systemctl/rc-service")
+    fi
+
     if [[ ${#missing_commands[@]} -gt 0 ]]; then
         error "错误: 缺少必要的系统命令: ${missing_commands[*]}"
         error "请确保系统完整安装后再运行此脚本。"
@@ -222,12 +306,19 @@ pre_check() {
         exit 1
     fi
 
-    if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null; then
-        info "检测到缺失的依赖 (jq/curl)，正在尝试自动安装..."
-        (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y jq curl) &> /dev/null &
+    # 增加了对官方安装脚本必备依赖的检查 (unzip, ca-certificates)
+    if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null || ! command -v unzip &>/dev/null; then
+        info "检测到缺失的依赖 (jq/curl/unzip/ca-certificates)，正在尝试自动安装..."
+        if command -v apt-get &>/dev/null; then
+            (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y jq curl unzip ca-certificates) &> /dev/null &
+        elif command -v apk &>/dev/null; then
+            # Alpine 环境下自动安装所需依赖
+            (apk add --no-cache jq curl unzip ca-certificates) &> /dev/null &
+        fi
+        
         spinner $!
-        if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null; then
-            error "依赖 (jq/curl) 自动安装失败。请手动运行 'apt update && apt install -y jq curl' 后重试。"
+        if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null || ! command -v unzip &>/dev/null; then
+            error "依赖自动安装失败。请手动安装 (jq curl unzip ca-certificates) 后重试。"
             exit 1
         fi
         success "依赖已成功安装。"
@@ -238,7 +329,16 @@ check_xray_status() {
     if [[ ! -f "$xray_binary_path" ]]; then xray_status_info="  Xray 状态: ${red}未安装${none}"; return; fi
     local xray_version=$($xray_binary_path version 2>/dev/null | head -n 1 | awk '{print $2}' || echo "未知")
     local service_status
-    if systemctl is-active --quiet xray 2>/dev/null; then service_status="${green}运行中${none}"; else service_status="${yellow}未运行${none}"; fi
+    
+    # 适配 systemd 和 openrc
+    if command -v systemctl &>/dev/null; then
+        if systemctl is-active --quiet xray 2>/dev/null; then service_status="${green}运行中${none}"; else service_status="${yellow}未运行${none}"; fi
+    elif command -v rc-service &>/dev/null; then
+        if rc-service xray status 2>/dev/null | grep -q "started"; then service_status="${green}运行中${none}"; else service_status="${yellow}未运行${none}"; fi
+    else
+        service_status="${yellow}未知状态${none}"
+    fi
+    
     xray_status_info="  Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}"
 }
 
@@ -309,13 +409,17 @@ update_xray() {
 restart_xray() {
     if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装，无法重启。" && return 1; fi
     info "正在重启 Xray 服务..."
-    if ! systemctl restart xray; then
-        error "错误: Xray 服务重启失败, 请使用菜单 5 查看日志检查具体原因。"
-        return 1
+    local start_success=false
+    
+    # 适配 systemd 和 openrc 重启逻辑
+    if command -v systemctl &>/dev/null; then
+        systemctl restart xray && sleep 1 && systemctl is-active --quiet xray && start_success=true
+    elif command -v rc-service &>/dev/null; then
+        rc-service xray restart && sleep 1 && rc-service xray status | grep -q "started" && start_success=true
     fi
-    sleep 1
-    if ! systemctl is-active --quiet xray; then
-        error "错误: Xray 服务启动失败, 请使用菜单 5 查看日志检查具体原因。"
+
+    if ! $start_success; then
+        error "错误: Xray 服务启动或重启失败, 请使用菜单 5 查看日志检查具体原因。"
         return 1
     fi
     success "Xray 服务已成功重启！"
@@ -341,7 +445,17 @@ uninstall_xray() {
 view_xray_log() {
     if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装，无法查看日志。" && return; fi
     info "正在显示 Xray 实时日志... 按 Ctrl+C 退出。"
-    journalctl -u xray -f --no-pager
+    
+    # 适配 systemd 和 常规日志读取
+    if command -v journalctl &>/dev/null; then
+        journalctl -u xray -f --no-pager
+    else
+        if ls /var/log/xray/*.log 1> /dev/null 2>&1; then
+            tail -f /var/log/xray/*.log
+        else
+            error "未找到 Xray 日志文件。如果最近才启动，请等待几秒钟再试。"
+        fi
+    fi
 }
 
 modify_config() {
@@ -436,6 +550,7 @@ view_subscription_info() {
 # --- 核心逻辑函数 ---
 write_config() {
     local port=$1 uuid=$2 domain=$3 private_key=$4 public_key=$5 shortid="20220701"
+    # 这里修改日志配置为文件存储，适配 alpine 系统无 journalctl 的情况
     jq -n \
         --argjson port "$port" \
         --arg uuid "$uuid" \
@@ -444,7 +559,11 @@ write_config() {
         --arg public_key "$public_key" \
         --arg shortid "$shortid" \
     '{
-        "log": {"loglevel": "warning"},
+        "log": {
+            "loglevel": "warning",
+            "access": "/var/log/xray/access.log",
+            "error": "/var/log/xray/error.log"
+        },
         "inbounds": [{
             "listen": "0.0.0.0",
             "port": $port,
@@ -504,6 +623,9 @@ run_install() {
     fi
 
     info "正在写入 Xray 配置文件..."
+    # 确保 Alpine 下配置目录和日志目录都存在
+    mkdir -p /usr/local/etc/xray
+    mkdir -p /var/log/xray
     write_config "$port" "$uuid" "$domain" "$private_key" "$public_key"
 
     if ! restart_xray; then exit 1; fi
@@ -520,12 +642,11 @@ press_any_key_to_continue() {
 main_menu() {
     while true; do
         clear
-        echo -e "$cyan Xray VLESS-Reality 一键安装管理脚本$none"
+        echo -e "$cyan Xray VLESS-Reality 一键安装管理脚本 (支持 Alpine)$none"
         echo "---------------------------------------------"
         check_xray_status
         echo -e "${xray_status_info}"
         echo "---------------------------------------------"
-        # 修改：明确菜单项 1
         printf "  ${green}%-2s${none} %-35s\n" "1." "安装/重装 Xray (VLESS-reality)"
         printf "  ${cyan}%-2s${none} %-35s\n" "2." "更新 Xray"
         printf "  ${yellow}%-2s${none} %-35s\n" "3." "重启 Xray"
